@@ -1,0 +1,190 @@
+library(tidyverse)
+library(patchwork)
+library(ggrepel)
+library(paletteer)
+
+
+#Reading in data (corresponding to function call in determining FOI script)
+df.foi.i <- readr::read_csv("/Users/blrice/Library/CloudStorage/Dropbox/R DROPBOX/2022_MNJ_TAZO/R/modeling/output/foi_for_return_time_plotting.csv")
+
+
+#Dropping AND bumping FOI by fold changes
+df.foi.mod <- df.foi.i %>%
+  mutate(foi.up.100   = prob.inf*2.00,
+         foi.up.90    = prob.inf*1.90,
+         foi.up.80    = prob.inf*1.80,
+         foi.up.70    = prob.inf*1.70,
+         foi.up.60    = prob.inf*1.60,
+         foi.up.50    = prob.inf*1.50,
+         foi.up.40    = prob.inf*1.40,
+         foi.up.30    = prob.inf*1.30,
+         foi.up.20    = prob.inf*1.20,
+         foi.up.10    = prob.inf*1.10,
+         foi.0        = prob.inf,      #baseline
+         foi.down.10  = prob.inf*0.90,
+         foi.down.20  = prob.inf*0.80,
+         foi.down.30  = prob.inf*0.70,
+         foi.down.40  = prob.inf*0.60,
+         foi.down.50  = prob.inf*0.50,
+         foi.down.60  = prob.inf*0.40,
+         foi.down.70  = prob.inf*0.30,
+         foi.down.80  = prob.inf*0.20,
+         foi.down.90  = prob.inf*0.10,
+         foi.down.99  = prob.inf*0.01)
+
+df.foi.mod <- df.foi.mod %>%
+  pivot_longer(!c(day:code.new), names_to = "foi.scenario", values_to = "foi.c") %>%
+  dplyr::select(site_code, code.new, age, foi.scenario, foi.c)
+
+
+#Discrete: Gives days in an integer
+f.return.time.i <- function(foi, threshold){
+  
+  v.prob.inf <- rep(NA, 10000)
+  for(t in 1:10000){
+    v.prob.inf[t] <- 1-exp(-foi*t)
+  }
+  return.time <- length(which(v.prob.inf < threshold))
+  #If less than 1 day, will give zero which complicates plotting on log scale
+  #If RT is between day 0 and day 1 then representing as day 1
+  return.time <- ifelse(return.time < 1, 1, return.time)
+  
+  return(return.time)
+}
+
+#Continuous
+f.return.time.c <- function(foi, threshold){
+  
+  return.time.c <- -log(1-threshold)/foi
+  return(return.time.c)
+}
+
+df.foi.mod.RT <- df.foi.mod %>% rowwise() %>% 
+  mutate(RT  = f.return.time.i(foi = foi.c, threshold = 0.10)) %>%
+  mutate(RTc = f.return.time.c(foi = foi.c, threshold = 0.10))
+
+df.foi.mod.RT.p <- df.foi.mod.RT %>% 
+  mutate(foi.scenario = factor(foi.scenario, levels = unique(df.foi.mod.RT$foi.scenario))) %>%
+  mutate(code.new = factor(code.new, levels = c("MNJ.06", "MNJ.04", "MNJ.03", "MNJ.05", "MNJ.02", "MNJ.07", "MNJ.08", "MNJ.09", "MNJ.01", "MNJ.10"))) %>%
+  mutate(age_cat = case_when(
+    age ==  5 ~ "Young children (5y)",
+    age == 13 ~ "School aged children (13y)",
+    age == 18 ~ "Teenagers (18y)",
+    age == 27 ~ "Adults (27y)",
+  )) %>%
+  mutate(foi.scenario = case_when(
+    foi.scenario == "foi.up.100"  ~ "+100%",
+    foi.scenario == "foi.up.90"   ~ "+90%",
+    foi.scenario == "foi.up.80"   ~ "+80%",
+    foi.scenario == "foi.up.70"   ~ "+70%",
+    foi.scenario == "foi.up.60"   ~ "+60%",
+    foi.scenario == "foi.up.50"   ~ "+50%",
+    foi.scenario == "foi.up.40"   ~ "+40%",
+    foi.scenario == "foi.up.30"   ~ "+30%",
+    foi.scenario == "foi.up.20"   ~ "+20%",
+    foi.scenario == "foi.up.10"   ~ "+10%",
+    foi.scenario == "foi.0"       ~ "0%",
+    foi.scenario == "foi.down.10" ~ "-10%",
+    foi.scenario == "foi.down.20" ~ "-20%",
+    foi.scenario == "foi.down.30" ~ "-30%",
+    foi.scenario == "foi.down.40" ~ "-40%",
+    foi.scenario == "foi.down.50" ~ "-50%",
+    foi.scenario == "foi.down.60" ~ "-60%",
+    foi.scenario == "foi.down.70" ~ "-70%",
+    foi.scenario == "foi.down.80" ~ "-80%",
+    foi.scenario == "foi.down.90" ~ "-90%",
+    foi.scenario == "foi.down.99" ~ "-99%")) %>%
+  mutate(foi.scenario = factor(foi.scenario, levels = c("+100%","+90%","+80%","+70%","+60%","+50%","+40%","+30%","+20%","+10%","0%","-10%","-20%","-30%","-40%","-50%","-60%","-70%","-80%","-90%","-99%")))
+
+df.foi.100d <- df.foi.i %>%
+  filter(age == 13) %>%
+  mutate(code.new = factor(code.new, levels = c("MNJ.06", "MNJ.04", "MNJ.03", "MNJ.05", "MNJ.02", "MNJ.07", "MNJ.08", "MNJ.09", "MNJ.01", "MNJ.10"))) %>%
+  mutate(foi.o = prob.inf) %>%
+  mutate(foi.100d = -log(1-0.1)/100) %>%
+  mutate(foi.r = (foi.o-foi.100d)/foi.o * 100)
+
+
+df.c <- tibble(code.new = rep(unique(df.foi.i$code.new), each = 1000),
+               mod = rep(seq(from = 10, to = 0.01, by = -0.01), 10)) %>%
+  left_join(df.foi.i %>% filter(age == 13), by = join_by(code.new)) %>%
+  mutate(foi.mod = prob.inf * mod) %>%
+  mutate(code.new = factor(code.new, levels = c("MNJ.06", "MNJ.04", "MNJ.03", "MNJ.05", "MNJ.02", "MNJ.07", "MNJ.08", "MNJ.09", "MNJ.01", "MNJ.10")))
+  
+
+#Continuous
+f.return.time.c <- function(foi, threshold){
+  
+  return.time.c <- -log(1-threshold)/foi
+  return(return.time.c)
+}
+
+df.c.RT <- df.c %>% rowwise() %>% 
+  mutate(RTc = f.return.time.c(foi = foi.mod, threshold = 0.10))
+
+p0.bar <- df.foi.mod.RT.p %>% 
+  filter(foi.scenario == "0%") %>%
+  filter(age == 13) %>%
+  ggplot(aes(x = code.new, y = RTc)) +
+  geom_bar(aes(fill = code.new), stat = "identity") +
+  geom_hline(yintercept = 100, color = "grey50", alpha = 0.6, linetype = "11") +
+  xlab("Locality") + 
+  ylab("Number of days until infection prevalence reaches threshold (10%)\nfor the observed force of infection (FOI)") +
+  scale_fill_viridis_d(option = "turbo", name = "Site Code") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, family = "Andale Mono", hjust = 1, vjust = 0.5, size = 11),
+        axis.title = element_text(family = "Arial", size = 16),
+        panel.grid = element_blank())
+p0.bar
+
+
+p1.v5 <- df.c.RT %>% 
+  filter(mod >= 0.5) %>% filter(mod <= 2) %>%
+  ggplot(aes(x = code.new, y = RTc, group = code.new, color = code.new)) +
+  #Lines
+  geom_hline(yintercept = 100, color = "grey50", alpha = 0.6, linetype = "11") +
+  geom_line(data = df.c.RT %>% filter(mod == 2),   aes(x = code.new, y = RTc, group = mod), color = "grey60", alpha = 0.5) +
+  geom_line(data = df.c.RT %>% filter(mod == 1),   aes(x = code.new, y = RTc, group = mod), color = "grey60", alpha = 0.5) +
+  geom_line(data = df.c.RT %>% filter(mod == 0.5), aes(x = code.new, y = RTc, group = mod), color = "grey60", alpha = 0.5) +
+  #Data
+  geom_path(linetype = "dashed") +
+  #Observed
+  geom_point(data = df.c.RT %>% filter(mod == 1),
+             aes(x = code.new, y = RTc, color = code.new),
+             size = 2) +
+  #Double-Half
+  geom_point(data = df.c.RT %>% filter(mod %in% c(0.5, 2)),
+             aes(x = code.new, y = RTc, color = code.new),
+             size = 1.2) +
+  
+  xlab("Locality") + 
+  ylab("Number of days until infection prevalence reaches threshold (10%)\nfor varying FOI scenarios") +
+  scale_color_viridis_d(option = "turbo", name = "Locality") +
+  theme_bw() +
+  theme(legend.position = "inside",
+    legend.position.inside = c(0.98, 0.98),
+    legend.justification = c("right", "top"),
+    axis.text.x = element_text(angle = 90, family = "Andale Mono", hjust = 1, vjust = 0.5, size = 11),
+    axis.title = element_text(family = "Arial", size = 16),
+    panel.grid = element_blank())
+p1.v5
+
+
+p3 <- df.foi.100d %>%
+  ggplot(aes(x = code.new, y = foi.r)) +
+  geom_hline(yintercept = 100, color = "grey50", alpha = 0.6, linetype = "11") +
+  geom_bar(aes(fill = code.new), stat = "identity") +
+  scale_fill_viridis_d(option = "turbo", name = "Locality") +
+  scale_y_continuous(limits = c(0, 100)) +
+  xlab("Locality") + 
+  ylab("% reduction in FOI needed for return time > 100 days") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, family = "Andale Mono", hjust = 1, vjust = 0.5, size = 11),
+        axis.title = element_text(family = "Arial", size = 16),
+        panel.grid = element_blank())
+p3
+
+
+p0.bar + plot_spacer() + p1.v5 + plot_spacer() + p3 + plot_layout(nrow = 1, widths = c(1, 0.02, 1, 0.4, 1))
+
